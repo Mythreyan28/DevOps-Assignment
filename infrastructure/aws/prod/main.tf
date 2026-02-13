@@ -143,6 +143,19 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
 }
 
 ############################
+# ECR REPOSITORIES
+############################
+
+resource "aws_ecr_repository" "backend" {
+  name = "devops-assignment-backend"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+
+############################
 # ECS TASK
 ############################
 
