@@ -11,7 +11,7 @@ env:
   ECS_CLUSTER: devops-assignment
   ECS_SERVICE_BACKEND: backend
   ECS_SERVICE_FRONTEND: frontend
-  NEXT_PUBLIC_API_URL: http://da-prod-alb-1813349231.us-east-1.elb.amazonaws.com
+  NEXT_PUBLIC_API_URL: http://tf-lb-20260213170133848700000005-2055493938.ap-south-1.elb.amazonaws.com/api
 
 permissions:
   id-token: write
