@@ -116,7 +116,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_FRONTEND:latest
       - run: |
           aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_BACKEND --force-new-deployment --region $AWS_REGION
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_FRONTEND --force-new-deployment --region $AWS_REGION
+          #aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_FRONTEND --force-new-deployment --region $AWS_REGION
 
   test:
     needs: build-and-deploy
