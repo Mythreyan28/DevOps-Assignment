@@ -75,6 +75,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
       - working-directory: infrastructure/aws/prod
         run: terraform init
       - working-directory: infrastructure/aws/prod
@@ -164,6 +167,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
       - working-directory: infrastructure/aws/prod
         run: terraform init
       - working-directory: infrastructure/aws/prod
