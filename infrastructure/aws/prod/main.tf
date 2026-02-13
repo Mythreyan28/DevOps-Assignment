@@ -91,6 +91,15 @@ resource "aws_lb" "main" {
   security_groups = [aws_security_group.alb.id]
 }
 
+### FRONTEND TARGET GROUP
+resource "aws_lb_target_group" "frontend" {
+  port        = 3000
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "ip"
+}
+
+### BACKEND TARGET GROUP
 resource "aws_lb_target_group" "backend" {
   port        = 8000
   protocol    = "HTTP"
@@ -102,13 +111,31 @@ resource "aws_lb_target_group" "backend" {
   }
 }
 
+### LISTENER → DEFAULT FRONTEND
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80
 
   default_action {
     type             = "forward"
+    target_group_arn = aws_lb_target_group.frontend.arn
+  }
+}
+
+### ROUTE /api → BACKEND
+resource "aws_lb_listener_rule" "backend" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
   }
 }
 
@@ -154,11 +181,19 @@ resource "aws_ecr_repository" "backend" {
   }
 }
 
+resource "aws_ecr_repository" "frontend" {
+  name = "devops-assignment-frontend"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
 
 ############################
-# ECS TASK
+# ECS TASKS
 ############################
 
+### BACKEND TASK
 resource "aws_ecs_task_definition" "backend" {
   family                   = "backend"
   requires_compatibilities = ["FARGATE"]
@@ -181,10 +216,58 @@ resource "aws_ecs_task_definition" "backend" {
   ])
 }
 
+### FRONTEND TASK
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "frontend"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+
+  cpu    = "256"
+  memory = "512"
+
+  execution_role_arn = aws_iam_role.ecs_execution.arn
+
+  container_definitions = jsonencode([
+    {
+      name  = "frontend"
+      image = aws_ecr_repository.frontend.repository_url
+
+      portMappings = [{
+        containerPort = 3000
+      }]
+    }
+  ])
+}
+
 ############################
-# ECS SERVICE
+# ECS SERVICES
 ############################
 
+### FRONTEND SERVICE
+resource "aws_ecs_service" "frontend" {
+  name            = "frontend"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.frontend.arn
+
+  desired_count = 2
+  launch_type   = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.frontend.arn
+    container_name   = "frontend"
+    container_port   = 3000
+  }
+
+  depends_on = [aws_lb_listener.http]
+}
+
+### BACKEND SERVICE
 resource "aws_ecs_service" "backend" {
   name            = "backend"
   cluster         = aws_ecs_cluster.main.id
