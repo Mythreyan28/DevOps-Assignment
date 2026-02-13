@@ -119,7 +119,7 @@ jobs:
           aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_FRONTEND --force-new-deployment --region $AWS_REGION
 
   test:
-    needs: apply
+    needs: build-and-deploy
     runs-on: ubuntu-latest
     steps:
       - run: sleep 60
