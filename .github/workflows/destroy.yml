@@ -1,0 +1,42 @@
+name: Cleanup – Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "yes" to confirm destruction'
+        required: true
+        default: 'no'
+
+env:
+  AWS_REGION: us-east-1
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    if: github.event.inputs.confirm == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
+      - name: Terraform Init
+        working-directory: infrastructure/aws/prod
+        run: terraform init
+
+      - name: Terraform Destroy
+        working-directory: infrastructure/aws/prod
+        run: terraform destroy -auto-approve

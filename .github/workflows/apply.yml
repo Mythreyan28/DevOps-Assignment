@@ -1,0 +1,161 @@
+name: Apply – Provision, Deploy & Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan_artifact:
+        description: 'Name of the plan artifact to apply'
+        required: true
+        default: 'tfplan'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_BACKEND: devops-assignment-backend
+  ECR_FRONTEND: devops-assignment-frontend
+  ECS_CLUSTER: devops-assignment-prod
+  ECS_SERVICE_BACKEND: devops-assignment-prod-backend
+  ECS_SERVICE_FRONTEND: devops-assignment-prod-frontend
+  NEXT_PUBLIC_API_URL: http://da-prod-alb-1813349231.us-east-1.elb.amazonaws.com
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend_url: ${{ steps.get_urls.outputs.frontend_url }}
+      backend_url: ${{ steps.get_urls.outputs.backend_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.plan_artifact }}
+          path: infrastructure/aws/prod
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
+      - name: Terraform Init
+        working-directory: infrastructure/aws/prod
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: infrastructure/aws/prod
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get URLs from Terraform output
+        id: get_urls
+        working-directory: infrastructure/aws/prod
+        run: |
+          echo "frontend_url=$(terraform output -raw frontend_url)" >> $GITHUB_OUTPUT
+          echo "backend_url=$(terraform output -raw backend_url)" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: provision
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push backend image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd backend
+          docker build -t $ECR_REGISTRY/$ECR_BACKEND:latest .
+          docker push $ECR_REGISTRY/$ECR_BACKEND:latest
+
+      - name: Build, tag, and push frontend image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd frontend
+          docker build --build-arg NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+            -t $ECR_REGISTRY/$ECR_FRONTEND:latest .
+          docker push $ECR_REGISTRY/$ECR_FRONTEND:latest
+
+      - name: Force new deployment for backend
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_BACKEND \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Force new deployment for frontend
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_FRONTEND \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+  test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for services to be stable
+        run: sleep 60   # Simple wait; you can replace with a proper health check loop
+
+      - name: Health Check (backend)
+        run: |
+          curl -f ${{ needs.provision.outputs.backend_url }}/health || exit 1
+
+      - name: Capture Homepage (frontend)
+        run: |
+          curl -s ${{ needs.provision.outputs.frontend_url }} -o homepage.html
+
+      - name: Upload Homepage as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: homepage
+          path: homepage.html
+
+      - name: Generate Deployment Report
+        run: |
+          cat << EOF > deployment-report.txt
+          Deployment completed at $(date)
+          Frontend URL: ${{ needs.provision.outputs.frontend_url }}
+          Backend URL: ${{ needs.provision.outputs.backend_url }}
+          Backend Health: ${{ needs.provision.outputs.backend_url }}/health
+          Status: SUCCESS
+          EOF
+          cat deployment-report.txt
+
+      - name: Upload Deployment Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-report
+          path: deployment-report.txt
+
+      - name: Show URLs in Job Summary
+        run: |
+          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | URL |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | [${{ needs.provision.outputs.frontend_url }}](${{ needs.provision.outputs.frontend_url }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend API | [${{ needs.provision.outputs.backend_url }}](${{ needs.provision.outputs.backend_url }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Check | [${{ needs.provision.outputs.backend_url }}/health](${{ needs.provision.outputs.backend_url }}/health) |" >> $GITHUB_STEP_SUMMARY
