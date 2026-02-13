@@ -1,0 +1,162 @@
+name: Full Pipeline (with manual approvals)
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_BACKEND: devops-assignment-backend
+  ECR_FRONTEND: devops-assignment-frontend
+  ECS_CLUSTER: devops-assignment-prod
+  ECS_SERVICE_BACKEND: devops-assignment-prod-backend
+  ECS_SERVICE_FRONTEND: devops-assignment-prod-frontend
+  NEXT_PUBLIC_API_URL: http://da-prod-alb-1813349231.us-east-1.elb.amazonaws.com
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-and-plan:
+    runs-on: ubuntu-latest
+    outputs:
+      plan-exists: ${{ steps.plan.outputs.plan-exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+      - working-directory: infrastructure/aws/prod
+        run: terraform init
+      - working-directory: infrastructure/aws/prod
+        run: terraform validate
+      - working-directory: infrastructure/aws/prod
+        run: terraform fmt -check -diff
+      - id: plan
+        working-directory: infrastructure/aws/prod
+        run: |
+          terraform plan -out=tfplan
+          echo "plan-exists=true" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infrastructure/aws/prod/tfplan
+
+  apply:
+    needs: validate-and-plan
+    runs-on: ubuntu-latest
+    environment:
+      name: production-apply
+      url: ${{ steps.urls.outputs.frontend_url }}
+    outputs:
+      frontend_url: ${{ steps.urls.outputs.frontend_url }}
+      backend_url: ${{ steps.urls.outputs.backend_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infrastructure/aws/prod
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+      - working-directory: infrastructure/aws/prod
+        run: terraform init
+      - working-directory: infrastructure/aws/prod
+        run: terraform apply -auto-approve tfplan
+      - id: urls
+        working-directory: infrastructure/aws/prod
+        run: |
+          echo "frontend_url=$(terraform output -raw frontend_url)" >> $GITHUB_OUTPUT
+          echo "backend_url=$(terraform output -raw backend_url)" >> $GITHUB_OUTPUT
+
+  build-and-deploy:
+    needs: apply
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+      - name: Build & push backend
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd backend
+          docker build -t $ECR_REGISTRY/$ECR_BACKEND:latest .
+          docker push $ECR_REGISTRY/$ECR_BACKEND:latest
+      - name: Build & push frontend
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd frontend
+          docker build --build-arg NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+            -t $ECR_REGISTRY/$ECR_FRONTEND:latest .
+          docker push $ECR_REGISTRY/$ECR_FRONTEND:latest
+      - run: |
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_BACKEND --force-new-deployment --region $AWS_REGION
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_FRONTEND --force-new-deployment --region $AWS_REGION
+
+  test:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 60
+      - name: Health check
+        run: curl -f ${{ needs.apply.outputs.backend_url }}/health
+      - name: Capture homepage
+        run: curl -s ${{ needs.apply.outputs.frontend_url }} -o homepage.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homepage
+          path: homepage.html
+      - name: Generate report
+        run: |
+          cat << EOF > deployment-report.txt
+          Deployment completed at $(date)
+          Frontend URL: ${{ needs.apply.outputs.frontend_url }}
+          Backend URL: ${{ needs.apply.outputs.backend_url }}
+          Health Check: ${{ needs.apply.outputs.backend_url }}/health
+          Status: SUCCESS
+          EOF
+          cat deployment-report.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployment-report
+          path: deployment-report.txt
+      - name: Show URLs in summary
+        run: |
+          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | URL |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | [${{ needs.apply.outputs.frontend_url }}](${{ needs.apply.outputs.frontend_url }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend API | [${{ needs.apply.outputs.backend_url }}](${{ needs.apply.outputs.backend_url }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Check | [${{ needs.apply.outputs.backend_url }}/health](${{ needs.apply.outputs.backend_url }}/health) |" >> $GITHUB_STEP_SUMMARY
+
+  destroy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: production-destroy
+    if: github.event.inputs.destroy == 'true'   # optional, you can also trigger manually via workflow_dispatch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+      - working-directory: infrastructure/aws/prod
+        run: terraform init
+      - working-directory: infrastructure/aws/prod
+        run: terraform destroy -auto-approve
