@@ -9,8 +9,8 @@ env:
   ECR_BACKEND: devops-assignment-backend
   ECR_FRONTEND: devops-assignment-frontend
   ECS_CLUSTER: devops-assignment
-  ECS_SERVICE_BACKEND: devops-assignment-prod-backend
-  ECS_SERVICE_FRONTEND: devops-assignment-prod-frontend
+  ECS_SERVICE_BACKEND: backend
+  ECS_SERVICE_FRONTEND: frontend
   NEXT_PUBLIC_API_URL: http://da-prod-alb-1813349231.us-east-1.elb.amazonaws.com
 
 permissions:
