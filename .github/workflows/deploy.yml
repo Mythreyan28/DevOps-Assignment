@@ -116,7 +116,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_FRONTEND:latest
       - run: |
           aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_BACKEND --force-new-deployment --region $AWS_REGION
-          #aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_FRONTEND --force-new-deployment --region $AWS_REGION
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_FRONTEND --force-new-deployment --region $AWS_REGION
 
   test:
     needs: build-and-deploy
@@ -124,7 +124,7 @@ jobs:
     steps:
       - run: sleep 60
       - name: Health check
-        run: curl -f ${{ needs.apply.outputs.backend_url }}/health
+        run: curl -f ${{ needs.apply.outputs.backend_url }}
       - name: Capture homepage
         run: curl -s ${{ needs.apply.outputs.frontend_url }} -o homepage.html
       - uses: actions/upload-artifact@v4
@@ -137,7 +137,7 @@ jobs:
           Deployment completed at $(date)
           Frontend URL: ${{ needs.apply.outputs.frontend_url }}
           Backend URL: ${{ needs.apply.outputs.backend_url }}
-          Health Check: ${{ needs.apply.outputs.backend_url }}/health
+          Health Check: ${{ needs.apply.outputs.backend_url }}
           Status: SUCCESS
           EOF
           cat deployment-report.txt
@@ -152,7 +152,7 @@ jobs:
           echo "|---------|-----|" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend | [${{ needs.apply.outputs.frontend_url }}](${{ needs.apply.outputs.frontend_url }}) |" >> $GITHUB_STEP_SUMMARY
           echo "| Backend API | [${{ needs.apply.outputs.backend_url }}](${{ needs.apply.outputs.backend_url }}) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Health Check | [${{ needs.apply.outputs.backend_url }}/health](${{ needs.apply.outputs.backend_url }}/health) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Check | [${{ needs.apply.outputs.backend_url }}](${{ needs.apply.outputs.backend_url }}) |" >> $GITHUB_STEP_SUMMARY
 
   destroy:
     needs: test
