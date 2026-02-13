@@ -31,6 +31,14 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.0
+      - name: Debug workspace contents
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Contents of infrastructure/aws:"
+          ls -la infrastructure/aws || echo "infrastructure/aws not found"
+          echo "Contents of infrastructure/aws/prod:"
+          ls -la infrastructure/aws/prod || echo "infrastructure/aws/prod not found"
+
       - working-directory: infrastructure/aws/prod
         run: terraform init
       - working-directory: infrastructure/aws/prod
