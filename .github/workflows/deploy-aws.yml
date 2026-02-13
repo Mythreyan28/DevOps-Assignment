@@ -1,0 +1,70 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:   # allows manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  ECR_BACKEND: devops-assignment-backend
+  ECR_FRONTEND: devops-assignment-frontend
+  ECS_CLUSTER: devops-assignment-prod
+  ECS_SERVICE_BACKEND: devops-assignment-prod-backend
+  ECS_SERVICE_FRONTEND: devops-assignment-prod-frontend
+  NEXT_PUBLIC_API_URL: http://da-prod-alb-1813349231.us-east-1.elb.amazonaws.com
+
+permissions:
+  id-token: write 
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push backend image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd backend
+          docker build -t $ECR_REGISTRY/$ECR_BACKEND:latest .
+          docker push $ECR_REGISTRY/$ECR_BACKEND:latest
+
+      - name: Build, tag, and push frontend image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          NEXT_PUBLIC_API_URL: ${{ env.NEXT_PUBLIC_API_URL }}
+        run: |
+          cd frontend
+          docker build --build-arg NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+            -t $ECR_REGISTRY/$ECR_FRONTEND:latest .
+          docker push $ECR_REGISTRY/$ECR_FRONTEND:latest
+
+      - name: Force new deployment for backend
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_BACKEND \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Force new deployment for frontend
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_FRONTEND \
+            --force-new-deployment \
+            --region $AWS_REGION
