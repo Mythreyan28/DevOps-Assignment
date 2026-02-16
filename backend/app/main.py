@@ -1,21 +1,28 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import os
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 app = FastAPI()
 
-# Configure CORS
+# FIXED CORS CONFIGURATION - Allow frontend origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://da-prod-alb-1813349231.us-east-1.elb.amazonaws.com",  # Your frontend URL
+        "http://localhost:3000",  # Local development
+        "http://localhost:8000",  # Local backend
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/api")
+async def api_root():
+    return {
+        "message": "DevOps Assignment API",
+        "status": "running",
+        "endpoints": ["/health", "/message"]
+    }
 
 @app.get("/api/health")
 async def health_check():
@@ -23,4 +30,4 @@ async def health_check():
 
 @app.get("/api/message")
 async def get_message():
-    return {"message": "You've successfully integrated the backend!"}
+    return {"message": "Hello from DevOps Assignment backend!"}
